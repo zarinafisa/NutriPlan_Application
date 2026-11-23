@@ -1,5 +1,6 @@
 package com.example.nutriplan.data.repository
 
+import com.example.nutriplan.data.local.StatusRencana
 import androidx.room.withTransaction
 import com.example.nutriplan.data.local.NutriDatabase
 import com.example.nutriplan.data.local.WaktuMakan
@@ -39,6 +40,37 @@ class MealPlanRepository(
     fun observePlans(userId: Long): Flow<List<MealPlanEntity>> = dao.observePlans(userId)
     fun observeItems(planId: Long): Flow<List<MealPlanItemEntity>> = dao.observeItems(planId)
 
+    fun observePlan(planId: Long): Flow<MealPlanEntity?> = dao.observePlan(planId)
+
+    fun observeAllItems(userId: Long): Flow<List<MealPlanItemEntity>> = dao.observeAllItems(userId)
+
+    /** Salin rencana lama menjadi rencana AKTIF baru mulai [mulai]. Semua menu belum dimakan. */
+    suspend fun reusePlan(planId: Long, userId: Long, mulai: LocalDate): Long? =
+        db.withTransaction<Long?> {
+            val lama = dao.getPlan(planId)
+            val items = dao.getItems(planId)
+            if (lama == null || items.isEmpty()) {
+                null
+            } else {
+                dao.finishActivePlans(userId)
+                val baru = dao.insertPlan(
+                    MealPlanEntity(
+                        userId = userId, nama = lama.nama,
+                        tanggalMulai = mulai.toString(), durasi = lama.durasi
+                    )
+                )
+                dao.insertItems(
+                    items.map {
+                        it.copy(
+                            id = 0, planId = baru,
+                            tanggal = mulai.plusDays(it.hari - 1L).toString(),
+                            sudahDimakan = false
+                        )
+                    }
+                )
+                baru
+            }
+        }
     suspend fun getActivePlan(userId: Long): MealPlanEntity? =
         dao.observeActivePlan(userId).first()
 
@@ -95,5 +127,52 @@ class MealPlanRepository(
         }
     }
 
-    suspend fun markEaten(itemId: Long, eaten: Boolean) = dao.setEaten(itemId, eaten)
+    /** Simpan status dimakan. Semua menu dimakan -> rencana SELESAI; batal centang -> kembali AKTIF (bila tak ada rencana aktif lain). */
+    suspend fun getItems(planId: Long): List<MealPlanItemEntity> = dao.getItems(planId)
+
+    /** Semua menu dimakan -> SELESAI. Batal centang -> kembali AKTIF (bila tak ada rencana aktif lain). */
+    private suspend fun sinkronStatus(planId: Long, bolehAktifKembali: Boolean) {
+        val plan = dao.getPlan(planId) ?: return
+        val daftar = dao.getItems(planId)
+        val semua = daftar.isNotEmpty() && daftar.all { it.sudahDimakan }
+
+        if (plan.status == StatusRencana.AKTIF && semua) {
+            dao.updatePlan(plan.copy(status = StatusRencana.SELESAI))
+        } else if (plan.status == StatusRencana.SELESAI && !semua && bolehAktifKembali &&
+            dao.observeActivePlan(plan.userId).first() == null
+        ) {
+            dao.updatePlan(plan.copy(status = StatusRencana.AKTIF))
+        }
+    }
+
+    suspend fun markEaten(itemId: Long, eaten: Boolean) {
+        db.withTransaction {
+            dao.setEaten(itemId, eaten)
+            val item = dao.getItem(itemId)
+            if (item != null) sinkronStatus(item.planId, bolehAktifKembali = !eaten)
+        }
+    }
+
+    /**
+     * Ganti menu satu slot dalam SATU transaksi: menu, snapshot kalori dan harga baru,
+     * status dimakan sesuai pilihan pengguna. Satu baris item = tidak mungkin terhitung ganda.
+     */
+    suspend fun confirmSwap(itemId: Long, menu: MenuEntity, sudahDimakan: Boolean): Boolean =
+        db.withTransaction {
+            val item = dao.getItem(itemId)
+            if (item == null || !menu.dataComplete) {
+                false
+            } else {
+                dao.updateItem(
+                    item.copy(
+                        menuId = menu.id,
+                        kaloriSnapshot = menu.kalori,
+                        hargaSnapshot = menu.harga,
+                        sudahDimakan = sudahDimakan
+                    )
+                )
+                sinkronStatus(item.planId, bolehAktifKembali = !sudahDimakan)
+                true
+            }
+        }
 }

@@ -24,6 +24,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.example.nutriplan.data.Session
+import com.example.nutriplan.data.local.StatusRencana
 import com.example.nutriplan.data.local.WaktuMakan
 import com.example.nutriplan.data.local.entity.MealPlanEntity
 import com.example.nutriplan.data.local.entity.MealPlanItemEntity
@@ -56,6 +57,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -66,6 +68,9 @@ data class SlotUi(val waktu: WaktuMakan, val item: MealPlanItemEntity?, val menu
 data class PlanUiState(
     val loading: Boolean = true,
     val ada: Boolean = false,
+    val status: StatusRencana = StatusRencana.AKTIF,
+    val namaRencana: String = "",
+    val durasi: Int = 0,
     val rentang: String = "",
     val hariIni: Int = 1,
     val hari: Int = 1,
@@ -80,18 +85,23 @@ data class PlanUiState(
     val protein: Int = 0,          // dari menu yang sudah dimakan
     val karbo: Int = 0,
     val lemak: Int = 0
-)
+) {
+    /** Rencana yang sudah selesai hanya dilihat (tidak bisa tambah atau ganti menu). */
+    val bacaSaja: Boolean get() = status == StatusRencana.SELESAI
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MealPlanViewModel(
-    planRepo: MealPlanRepository,
+    private val planRepo: MealPlanRepository,
     menuRepo: MenuRepository,
     prefRepo: PreferenceRepository,
-    userId: Long
+    private val userId: Long,
+    private val planId: Long?          // null = rencana aktif
 ) : ViewModel() {
 
     private val hariDipilih = MutableStateFlow<Int?>(null)
-    private val planFlow = planRepo.observeActivePlan(userId)
+    private val planFlow = if (planId == null) planRepo.observeActivePlan(userId)
+    else planRepo.observePlan(planId)
     private val itemsFlow = planFlow.flatMapLatest { p ->
         if (p == null) flowOf(emptyList<MealPlanItemEntity>()) else planRepo.observeItems(p.id)
     }
@@ -103,6 +113,15 @@ class MealPlanViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PlanUiState())
 
     fun pilihHari(h: Int) { hariDipilih.value = h }
+
+    /** Salin rencana lama menjadi rencana aktif baru. */
+    fun gunakanLagi(onSelesai: (Boolean) -> Unit) {
+        val id = planId ?: return
+        viewModelScope.launch {
+            val baru = planRepo.reusePlan(id, userId, LocalDate.now())
+            onSelesai(baru != null)
+        }
+    }
 
     private fun bangun(
         plan: MealPlanEntity?,
@@ -118,7 +137,8 @@ class MealPlanViewModel(
         }
         val mulai = LocalDate.parse(plan.tanggalMulai)
         val hariIni = (ChronoUnit.DAYS.between(mulai, LocalDate.now()) + 1).toInt().coerceIn(1, plan.durasi)
-        val hari = (dipilih ?: hariIni).coerceIn(1, plan.durasi)
+        val awal = if (plan.status == StatusRencana.SELESAI) 1 else hariIni
+        val hari = (dipilih ?: awal).coerceIn(1, plan.durasi)
 
         val peta = menus.associateBy { it.id }
         val itemHari = items.filter { it.hari == hari }
@@ -130,6 +150,9 @@ class MealPlanViewModel(
         return PlanUiState(
             loading = false,
             ada = true,
+            status = plan.status,
+            namaRencana = plan.nama,
+            durasi = plan.durasi,
             rentang = Formatter.rentangTanggal(mulai, mulai.plusDays(plan.durasi - 1L)),
             hariIni = hariIni,
             hari = hari,
@@ -152,26 +175,40 @@ class MealPlanViewModel(
 
 @Composable
 fun RencanaScreen(
+    planId: Long? = null,
     onBack: () -> Unit,
     onDetail: (Long) -> Unit,
     onTambah: (Int, WaktuMakan) -> Unit,
-    onBuatRencana: () -> Unit
+    onGanti: (Long) -> Unit,
+    onBuatRencana: () -> Unit,
+    onGunakanLagiSelesai: () -> Unit = {}
 ) {
-    val vm = nutriViewModel { c ->
-        MealPlanViewModel(c.mealPlanRepository, c.menuRepository, c.preferenceRepository, Session.userId)
+    val context = LocalContext.current
+    val vm = nutriViewModel(key = "rencana-${Session.userId}-${planId ?: 0L}") { c ->
+        MealPlanViewModel(
+            c.mealPlanRepository, c.menuRepository, c.preferenceRepository,
+            Session.userId, planId
+        )
     }
     val state by vm.ui.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     RencanaContent(
         state = state,
         onBack = onBack,
         onPilihHari = vm::pilihHari,
         onDetail = onDetail,
         onTambah = onTambah,
-        onGanti = {
-            Toast.makeText(context, "Ganti Menu dibuat di Tahap 7", Toast.LENGTH_SHORT).show()
-        },
-        onBuatRencana = onBuatRencana
+        onGanti = onGanti,
+        onBuatRencana = onBuatRencana,
+        onGunakanLagi = {
+            vm.gunakanLagi { ok ->
+                if (ok) {
+                    Toast.makeText(context, "Rencana disalin dan dijadikan rencana aktif.", Toast.LENGTH_SHORT).show()
+                    onGunakanLagiSelesai()
+                } else {
+                    Toast.makeText(context, "Rencana gagal disalin.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     )
 }
 
@@ -185,7 +222,8 @@ fun RencanaContent(
     onDetail: (Long) -> Unit,
     onTambah: (Int, WaktuMakan) -> Unit,
     onGanti: (Long) -> Unit,
-    onBuatRencana: () -> Unit
+    onBuatRencana: () -> Unit,
+    onGunakanLagi: () -> Unit
 ) {
     if (state.loading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -220,11 +258,14 @@ fun RencanaContent(
             Text(state.rentang, style = MaterialTheme.typography.bodyMedium, color = TextMuted, modifier = Modifier.weight(1f))
             Surface(shape = RoundedCornerShape(50), color = GreenLight) {
                 Text(
-                    "AKTIF • HARI ${state.hariIni}",
+                    if (state.bacaSaja) "SELESAI • ${state.durasi} HARI" else "AKTIF • HARI ${state.hariIni}",
                     style = MaterialTheme.typography.labelSmall, color = GreenDark,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
+        }
+        if (state.bacaSaja) {
+            Text(state.namaRencana, style = MaterialTheme.typography.titleMedium)
         }
 
         DayTabs(state.tanggal, state.hari, onPilihHari)
@@ -247,10 +288,15 @@ fun RencanaContent(
         state.slots.forEach { slot ->
             SlotCard(
                 slot = slot,
+                bacaSaja = state.bacaSaja,
                 onTambah = { onTambah(state.hari, slot.waktu) },
                 onDetail = onDetail,
                 onGanti = onGanti
             )
+        }
+
+        if (state.bacaSaja) {
+            NutriButton("Gunakan rencana ini lagi", onClick = onGunakanLagi)
         }
 
         Text(
@@ -334,6 +380,11 @@ private fun BudgetCard(s: PlanUiState) {
                     style = MaterialTheme.typography.bodySmall, color = TextMuted
                 )
             }
+            Text(
+                "Rencana hari ini: ${Formatter.rupiah(s.rencanaBiaya)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMuted
+            )
             LinearProgressIndicator(
                 progress = { (s.totalBiaya.toFloat() / anggaran).coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
@@ -342,9 +393,8 @@ private fun BudgetCard(s: PlanUiState) {
             )
             if (melebihi) {
                 Text(
-                    "Rencana hari ini: ${Formatter.rupiah(s.rencanaBiaya)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextMuted
+                    "Melebihi anggaran ${Formatter.rupiahRapat(s.totalBiaya - s.anggaran)}",
+                    color = RedError, fontWeight = FontWeight.Bold
                 )
             } else {
                 Text("Sisa ${Formatter.rupiahRapat(s.anggaran - s.totalBiaya)}", color = TextMuted)
@@ -356,6 +406,7 @@ private fun BudgetCard(s: PlanUiState) {
 @Composable
 private fun SlotCard(
     slot: SlotUi,
+    bacaSaja: Boolean,
     onTambah: () -> Unit,
     onDetail: (Long) -> Unit,
     onGanti: (Long) -> Unit
@@ -373,8 +424,10 @@ private fun SlotCard(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = onTambah) {
-                    Text("+ Tambah Makanan", color = GreenDark, fontWeight = FontWeight.SemiBold)
+                if (!bacaSaja) {
+                    TextButton(onClick = onTambah) {
+                        Text("+ Tambah Makanan", color = GreenDark, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
             if (item != null && menu != null) {
@@ -391,12 +444,16 @@ private fun SlotCard(
                             TextButton(onClick = { onDetail(item.id) }, contentPadding = PaddingValues(end = 12.dp)) {
                                 Text("Detail →", color = GreenDark, fontWeight = FontWeight.SemiBold)
                             }
-                            TextButton(onClick = { onGanti(item.id) }, contentPadding = PaddingValues(end = 12.dp)) {
-                                Text("Ganti Menu →", color = GreenDark, fontWeight = FontWeight.SemiBold)
+                            if (!bacaSaja) {
+                                TextButton(onClick = { onGanti(item.id) }, contentPadding = PaddingValues(end = 12.dp)) {
+                                    Text("Ganti Menu →", color = GreenDark, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                     }
                 }
+            } else if (bacaSaja) {
+                Text("Tidak ada menu di slot ini.", color = TextMuted)
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(

@@ -37,4 +37,11 @@ object Formatter {
             "${mulai.dayOfMonth} ${mulai.format(bulan)} – ${selesai.dayOfMonth} ${selesai.format(bulan)} ${selesai.year}"
         }
     }
+    /** 1999-05-14 -> "14 Mei 1999" */
+    fun tanggalLahir(d: LocalDate): String =
+        d.format(DateTimeFormatter.ofPattern("d MMMM yyyy", idLocale))
+
+    /** 2026-10-12 -> "Oktober 2026" */
+    fun bulanTahun(d: LocalDate): String =
+        d.format(DateTimeFormatter.ofPattern("MMMM yyyy", idLocale))
 }

@@ -111,6 +111,12 @@ interface MealPlanDao {
     fun observeActivePlan(userId: Long): Flow<MealPlanEntity?>
 
     @Query("SELECT * FROM meal_plan WHERE id = :planId")
+    fun observePlan(planId: Long): Flow<MealPlanEntity?>
+
+    @Query("SELECT i.* FROM meal_plan_item i INNER JOIN meal_plan p ON i.planId = p.id WHERE p.userId = :userId")
+    fun observeAllItems(userId: Long): Flow<List<MealPlanItemEntity>>
+
+    @Query("SELECT * FROM meal_plan WHERE id = :planId")
     suspend fun getPlan(planId: Long): MealPlanEntity?
 
     @Query("SELECT * FROM meal_plan_item WHERE planId = :planId ORDER BY hari, waktuMakan")

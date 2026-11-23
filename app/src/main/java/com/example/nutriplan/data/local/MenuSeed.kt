@@ -16,8 +16,9 @@ import com.example.nutriplan.data.local.dao.MenuDao
 import com.example.nutriplan.data.local.entity.MenuEntity
 
 object MenuSeeder {
+    /** REPLACE pada id tetap 1..30: menu bawaan selalu mutakhir. Menu tambahan (id > 30) tidak tersentuh. */
     suspend fun seedIfEmpty(dao: MenuDao) {
-        if (dao.count() == 0) dao.insertAll(MenuSeed.menus)
+        dao.insertAll(MenuSeed.menus)
     }
 }
 
@@ -34,7 +35,8 @@ object MenuSeed {
     ) = MenuEntity(
         nama = nama, waktuMakan = waktu, kalori = kal, protein = p, karbo = k, lemak = l,
         harga = harga, bahan = bahan, langkah = langkah, alergen = alergen,
-        tagPola = pola, waktuMasakMenit = menit
+        tagPola = pola, waktuMasakMenit = menit,
+        fotoRes = "menu_" + nama.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
     )
 
     val menus: List<MenuEntity> = listOf(

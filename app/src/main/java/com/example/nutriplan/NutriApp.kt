@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import com.example.nutriplan.data.AppContainer
 import com.example.nutriplan.data.local.MenuSeeder
+import com.example.nutriplan.reminder.MealReminder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,8 +17,10 @@ class NutriApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        val c = container   // sekaligus memuat sesi login yang tersimpan
+        MealReminder.restore(this)
         appScope.launch {
-            val dao = container.database.menuDao()
+            val dao = c.database.menuDao()
             MenuSeeder.seedIfEmpty(dao)
             Log.d("NutriPlan", "Jumlah menu di database: ${dao.count()}")
         }

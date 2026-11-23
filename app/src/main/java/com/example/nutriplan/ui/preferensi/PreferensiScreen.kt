@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -20,18 +21,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.example.nutriplan.data.Session
 import com.example.nutriplan.data.local.Alergen
+import com.example.nutriplan.data.local.JenisKelamin
 import com.example.nutriplan.data.local.Pola
 import com.example.nutriplan.data.local.Tujuan
 import com.example.nutriplan.data.local.entity.PreferenceEntity
+import com.example.nutriplan.data.local.entity.ProfileEntity
 import com.example.nutriplan.data.repository.MealPlanRepository
 import com.example.nutriplan.data.repository.MenuRepository
 import com.example.nutriplan.data.repository.PreferenceRepository
+import com.example.nutriplan.data.repository.ProfileRepository
+import com.example.nutriplan.domain.CalorieCalculator
+import com.example.nutriplan.domain.HasilKalori
 import com.example.nutriplan.domain.MealPlanGenerator
 import com.example.nutriplan.ui.common.nutriViewModel
 import com.example.nutriplan.ui.components.BannerType
@@ -59,6 +66,9 @@ data class PrefUiState(
     val alergi: Set<String> = emptySet(),
     val anggaran: Int = 50_000,
     val targetKalori: Int = 1800,
+    val targetManual: Boolean = false,
+    val adaProfil: Boolean = false,
+    val batasMinimum: Int? = null,
     val porsi: Int = 1,
     val durasi: Int = 7,
     val loading: Boolean = true,
@@ -76,20 +86,64 @@ class PreferenceViewModel(
     private val prefRepo: PreferenceRepository,
     private val menuRepo: MenuRepository,
     private val planRepo: MealPlanRepository,
+    private val profileRepo: ProfileRepository,
     private val userId: Long
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(PrefUiState())
     val ui: StateFlow<PrefUiState> = _ui.asStateFlow()
 
+    private var profil: ProfileEntity? = null
+
     init {
         viewModelScope.launch {
             val p = prefRepo.get(userId) ?: PreferenceEntity(userId = userId)
             _ui.value = p.toUi()
+            // Pantau profil: ubah berat/aktivitas di Profil langsung memperbarui target di sini.
+            profileRepo.observe(userId).collect { pr ->
+                profil = pr
+                segarkanTarget()
+            }
         }
     }
 
-    fun setTujuan(t: Tujuan) { _ui.update { it.copy(tujuan = t) } }
+    private fun hitungDari(pr: ProfileEntity, tujuan: Tujuan): HasilKalori =
+        CalorieCalculator.hitung(
+            pr.jenisKelamin, pr.beratKg.toDouble(), pr.tinggiCm.toDouble(),
+            CalorieCalculator.umur(LocalDate.parse(pr.tanggalLahir)), pr.aktivitas, tujuan
+        )
+
+    private fun segarkanTarget() {
+        val pr = profil ?: return
+        _ui.update { s ->
+            val manual = pr.targetKaloriManual
+            if (manual != null) {
+                s.copy(targetKalori = manual, targetManual = true, adaProfil = true, batasMinimum = null)
+            } else {
+                val h = hitungDari(pr, s.tujuan)
+                val min = if (pr.jenisKelamin == JenisKelamin.PEREMPUAN)
+                    CalorieCalculator.MIN_PEREMPUAN else CalorieCalculator.MIN_LAKI
+                s.copy(
+                    targetKalori = h.target, targetManual = false, adaProfil = true,
+                    batasMinimum = if (h.disesuaikanMinimum) min else null
+                )
+            }
+        }
+    }
+
+    fun setTujuan(t: Tujuan) {
+        _ui.update { it.copy(tujuan = t) }
+        segarkanTarget()
+    }
+
+    /** null = kembali ke hitungan otomatis. Target manual disimpan terpisah di profil. */
+    fun setTargetManual(v: Int?) {
+        val pr = profil ?: return
+        viewModelScope.launch {
+            profileRepo.save(pr.copy(targetKaloriManual = v?.coerceIn(1200, 4000)))
+        }
+    }
+
     fun togglePola(p: String) {
         _ui.update { it.copy(pola = if (p in it.pola) it.pola - p else it.pola + p) }
     }
@@ -112,6 +166,9 @@ class PreferenceViewModel(
                 targetKaloriHarian = s.targetKalori, porsi = s.porsi, durasiHari = s.durasi
             )
             prefRepo.save(pref)
+            profil?.let { pr ->
+                profileRepo.save(pr.copy(tujuan = s.tujuan, targetKalori = hitungDari(pr, s.tujuan).target))
+            }
 
             val hasil = MealPlanGenerator().generate(pref, menuRepo.getAll())
             val plan = hasil.getOrNull()
@@ -144,13 +201,17 @@ class PrefActions(
     val onAnggaran: (Int) -> Unit,
     val onPorsi: (Int) -> Unit,
     val onDurasi: (Int) -> Unit,
+    val onTargetManual: (Int?) -> Unit,
     val onSimpan: () -> Unit
 )
 
 @Composable
 fun PreferensiScreen(onPlanCreated: () -> Unit) {
-    val vm = nutriViewModel { c ->
-        PreferenceViewModel(c.preferenceRepository, c.menuRepository, c.mealPlanRepository, Session.userId)
+    val vm = nutriViewModel(key = "pref-${Session.userId}") { c ->
+        PreferenceViewModel(
+            c.preferenceRepository, c.menuRepository, c.mealPlanRepository,
+            c.profileRepository, Session.userId
+        )
     }
     val state by vm.ui.collectAsStateWithLifecycle()
     PreferensiContent(
@@ -163,6 +224,7 @@ fun PreferensiScreen(onPlanCreated: () -> Unit) {
             onAnggaran = vm::setAnggaran,
             onPorsi = vm::setPorsi,
             onDurasi = vm::setDurasi,
+            onTargetManual = vm::setTargetManual,
             onSimpan = { vm.simpan(onPlanCreated) }
         )
     )
@@ -173,6 +235,8 @@ fun PreferensiScreen(onPlanCreated: () -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PreferensiContent(state: PrefUiState, actions: PrefActions) {
+    var dialogTarget by remember { mutableStateOf(false) }
+
     if (state.loading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = GreenDark)
@@ -270,11 +334,12 @@ fun PreferensiContent(state: PrefUiState, actions: PrefActions) {
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Card(
-                Modifier.weight(1f).height(104.dp),
+                onClick = { dialogTarget = true },
+                modifier = Modifier.weight(1f).heightIn(min = 104.dp),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = GreenLight)
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Target harian", style = MaterialTheme.typography.labelLarge, color = TextMuted)
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
@@ -286,10 +351,18 @@ fun PreferensiContent(state: PrefUiState, actions: PrefActions) {
                             color = GreenDark, modifier = Modifier.padding(bottom = 3.dp)
                         )
                     }
+                    Text(
+                        when {
+                            state.targetManual -> "Diatur manual • ketuk untuk ubah"
+                            state.adaProfil -> "Dari profilmu • ketuk untuk ubah"
+                            else -> "Ketuk untuk ubah"
+                        },
+                        style = MaterialTheme.typography.bodySmall, color = TextMuted
+                    )
                 }
             }
             Card(
-                Modifier.weight(1f).height(104.dp),
+                Modifier.weight(1f).heightIn(min = 104.dp),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
@@ -316,6 +389,17 @@ fun PreferensiContent(state: PrefUiState, actions: PrefActions) {
             }
         }
 
+        state.batasMinimum?.let {
+            InfoBanner(
+                "Target disesuaikan ke batas minimum ${Formatter.kkal(it)} agar tetap aman, bukan defisit 500 kkal penuh.",
+                type = BannerType.WARNING
+            )
+        }
+        Text(
+            "Angka kebutuhan kalori adalah panduan dan bukan diagnosis medis.",
+            style = MaterialTheme.typography.bodySmall, color = TextMuted
+        )
+
         DropdownField(
             label = "Durasi rencana",
             value = "${state.durasi} hari • 3 kali makan sehari"
@@ -341,6 +425,54 @@ fun PreferensiContent(state: PrefUiState, actions: PrefActions) {
             style = MaterialTheme.typography.bodySmall, color = TextMuted
         )
     }
+
+    if (dialogTarget) {
+        TargetDialog(
+            awal = state.targetKalori,
+            manual = state.targetManual,
+            onSimpan = { actions.onTargetManual(it); dialogTarget = false },
+            onDismiss = { dialogTarget = false }
+        )
+    }
+}
+
+@Composable
+private fun TargetDialog(
+    awal: Int,
+    manual: Boolean,
+    onSimpan: (Int?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var teks by remember { mutableStateOf(awal.toString()) }
+    val nilai = teks.toIntOrNull()
+    val valid = nilai != null && nilai in 1200..4000
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ubah target harian") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = teks,
+                    onValueChange = { teks = it.filter(Char::isDigit).take(4) },
+                    label = { Text("Target kalori (kkal)") },
+                    singleLine = true,
+                    isError = !valid,
+                    supportingText = { Text("Isi 1.200–4.000 kkal.") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                if (manual) {
+                    TextButton(onClick = { onSimpan(null) }) {
+                        Text("Kembali ke hitungan otomatis", color = GreenDark)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSimpan(nilai) }, enabled = valid) { Text("Simpan") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }
+    )
 }
 
 @Composable
