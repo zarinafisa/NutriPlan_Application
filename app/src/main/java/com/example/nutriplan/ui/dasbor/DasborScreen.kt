@@ -364,6 +364,7 @@ fun DasborContent(
             }
         }
 
+        InspirasiSection()
         Text("Biaya adalah estimasi per porsi.", style = MaterialTheme.typography.bodySmall, color = TextMuted)
         Spacer(Modifier.height(8.dp))
     }
