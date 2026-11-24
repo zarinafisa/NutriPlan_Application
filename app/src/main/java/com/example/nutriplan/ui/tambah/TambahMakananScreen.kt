@@ -1,5 +1,7 @@
 package com.example.nutriplan.ui.tambah
 
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -56,7 +58,8 @@ class TambahMakananViewModel(
     private val planRepo: MealPlanRepository,
     private val userId: Long,
     private val hari: Int,
-    waktuAwal: WaktuMakan
+    private val waktuAwal: WaktuMakan,
+    private val ganti: Boolean
 ) : ViewModel() {
 
     private val query = MutableStateFlow("")
@@ -75,11 +78,16 @@ class TambahMakananViewModel(
     fun setQuery(q: String) { query.value = q }
     fun setWaktu(w: WaktuMakan) { waktu.value = w }
 
-    /** Boleh melewati batas; peringatan tampil di layar Rencana Makan. */
+    /**
+     * Mode tambah: menu masuk ke slot sesuai chip yang dipilih.
+     * Mode ganti: menu selalu menimpa slot asal; chip hanya untuk menjelajah kategori.
+     * Menu yang diganti otomatis jadi "belum dimakan", jadi tidak terhitung ganda.
+     */
     fun tambah(menu: MenuEntity, onDone: () -> Unit) {
         viewModelScope.launch {
             val plan = planRepo.getActivePlan(userId)
-            if (plan != null) planRepo.setItem(plan.id, hari, waktu.value, menu)
+            val slot = if (ganti) waktuAwal else waktu.value
+            if (plan != null) planRepo.setItem(plan.id, hari, slot, menu)
             onDone()
         }
     }
@@ -88,17 +96,35 @@ class TambahMakananViewModel(
 // ---------------- Screen (stateful) ----------------
 
 @Composable
-fun TambahMakananScreen(hari: Int, waktuAwal: WaktuMakan, onBack: () -> Unit) {
-    val vm = nutriViewModel(key = "tambah-$hari-${waktuAwal.name}") { c ->
-        TambahMakananViewModel(c.menuRepository, c.mealPlanRepository, Session.userId, hari, waktuAwal)
+fun TambahMakananScreen(
+    hari: Int,
+    waktuAwal: WaktuMakan,
+    ganti: Boolean = false,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val vm = nutriViewModel(key = "tambah-$hari-${waktuAwal.name}-$ganti") { c ->
+        TambahMakananViewModel(
+            c.menuRepository, c.mealPlanRepository, Session.userId, hari, waktuAwal, ganti
+        )
     }
     val state by vm.ui.collectAsStateWithLifecycle()
     TambahMakananContent(
         state = state,
+        ganti = ganti,
         onBack = onBack,
         onQuery = vm::setQuery,
         onWaktu = vm::setWaktu,
-        onPilih = { menu -> vm.tambah(menu, onBack) }
+        onPilih = { menu ->
+            vm.tambah(menu) {
+                Toast.makeText(
+                    context,
+                    if (ganti) "Menu diganti." else "Makanan ditambahkan.",
+                    Toast.LENGTH_SHORT
+                ).show()
+                onBack()
+            }
+        }
     )
 }
 
@@ -107,6 +133,7 @@ fun TambahMakananScreen(hari: Int, waktuAwal: WaktuMakan, onBack: () -> Unit) {
 @Composable
 fun TambahMakananContent(
     state: TambahUiState,
+    ganti: Boolean,
     onBack: () -> Unit,
     onQuery: (String) -> Unit,
     onWaktu: (WaktuMakan) -> Unit,
@@ -119,9 +146,10 @@ fun TambahMakananContent(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ScreenHeader("Tambah Makanan", onBack = onBack)
+                ScreenHeader(if (ganti) "Ganti Menu" else "Tambah Makanan", onBack = onBack)
                 Text(
-                    "Pilih makanan yang ingin kamu tambahkan ke rencana makan",
+                    if (ganti) "Pilih menu pengganti untuk jadwal ini"
+                    else "Pilih makanan yang ingin kamu tambahkan ke rencana makan",
                     color = TextMuted, style = MaterialTheme.typography.bodyMedium
                 )
                 OutlinedTextField(

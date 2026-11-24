@@ -2,6 +2,8 @@ package com.example.nutriplan.ui.profil
 
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import com.example.nutriplan.domain.Batas
+import com.example.nutriplan.domain.BeratIdeal
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -74,7 +76,8 @@ data class ProfileFormState(
 ) {
     /** Error hanya tampil untuk kolom yang sudah disentuh. */
     fun error(kunci: String): String? {
-        if (kunci !in dikunjungi) return null
+        val targetTampil = kunci == "target" && targetBerat.isNotBlank() && tinggi.isNotBlank()
+        if (kunci !in dikunjungi && !targetTampil) return null
         return when (kunci) {
             "nama" -> Validator.nama(nama)
             "email" -> errEmailServer ?: Validator.email(email)
@@ -82,7 +85,7 @@ data class ProfileFormState(
             "tgl" -> Validator.tanggalLahir(tanggalLahir)
             "tinggi" -> Validator.tinggi(tinggi)
             "berat" -> Validator.berat(berat)
-            "target" -> Validator.berat(targetBerat)
+            "target" -> Validator.berat(targetBerat) ?: BeratIdeal.cekTarget(targetBerat, tinggi)
             "aktivitas" -> if (aktivitas == null) "Pilih tingkat aktivitas." else null
             else -> null
         }
@@ -100,6 +103,7 @@ data class ProfileFormState(
                 Validator.tinggi(tinggi) == null &&
                 Validator.berat(berat) == null &&
                 Validator.berat(targetBerat) == null &&
+                BeratIdeal.cekTarget(targetBerat, tinggi) == null &&
                 aktivitas != null
 }
 
@@ -345,8 +349,12 @@ fun ProfileFormContent(state: ProfileFormState, aksi: FormAksi, onBack: (() -> U
         }
         NutriTextField(
             state.targetBerat, aksi.onTargetBerat, "Target berat badan (kg)",
-            error = state.error("target"), keyboardType = KeyboardType.Number
+            error = state.error("target"),
+            helper = "Harus dalam rentang berat ideal sesuai tinggimu.",
+            keyboardType = KeyboardType.Number
         )
+        InfoBeratIdeal(state.tinggi, state.berat)
+
         PickerField(
             label = "Tingkat aktivitas",
             value = opsiAktivitas.firstOrNull { it.nilai == state.aktivitas }?.judul.orEmpty(),
@@ -505,4 +513,28 @@ private fun AktivitasSheet(awal: Aktivitas?, onDismiss: () -> Unit, onPilih: (Ak
             )
         }
     }
+}
+
+@Composable
+private fun InfoBeratIdeal(tinggi: String, berat: String) {
+    val cm = tinggi.toIntOrNull()
+    if (cm == null || cm !in Batas.TINGGI) return
+    val r = BeratIdeal.rentang(cm)
+    val kg = berat.toIntOrNull()?.takeIf { it in Batas.BERAT }
+
+    val baris = buildList {
+        add("Berat badan ideal untuk tinggi $cm cm: ${r.min}–${r.max} kg (IMT 18,5–25,0).")
+        if (kg != null) {
+            val bmi = BeratIdeal.bmi(kg, cm)
+            add("Berat kamu sekarang $kg kg • IMT ${BeratIdeal.format(bmi)} (${BeratIdeal.kategori(bmi).label}).")
+            add(
+                when {
+                    kg > r.max -> "Untuk mencapai rentang ideal, turunkan minimal ${kg - r.max} kg."
+                    kg < r.min -> "Untuk mencapai rentang ideal, naikkan minimal ${r.min - kg} kg."
+                    else -> "Berat kamu sudah berada di rentang ideal."
+                }
+            )
+        }
+    }
+    InfoBanner(baris.joinToString("\n"), type = BannerType.INFO)
 }

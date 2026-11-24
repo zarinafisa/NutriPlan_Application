@@ -189,9 +189,9 @@ class DashboardViewModel(
 fun DasborScreen(
     onLihatRencana: () -> Unit,
     onDetail: (Long) -> Unit,
-    onSusunRencana: () -> Unit
+    onSusunRencana: () -> Unit,
+    onLonceng: () -> Unit
 ) {
-    val context = LocalContext.current
     val vm = nutriViewModel(key = "dasbor-${Session.userId}") { c ->
         DashboardViewModel(
             c.mealPlanRepository, c.menuRepository, c.preferenceRepository,
@@ -204,9 +204,7 @@ fun DasborScreen(
         onLihatRencana = onLihatRencana,
         onDetail = onDetail,
         onSusunRencana = onSusunRencana,
-        onLonceng = {
-            Toast.makeText(context, "Pengingat dibuat di tahap polesan.", Toast.LENGTH_SHORT).show()
-        }
+        onLonceng = onLonceng
     )
 }
 

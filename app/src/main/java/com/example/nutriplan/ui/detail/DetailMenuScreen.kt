@@ -7,7 +7,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
@@ -125,9 +124,7 @@ fun DetailMenuContent(
             .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        ScreenHeader("Detail menu", onBack = onBack, action = {
-            IconButton(onClick = { }) { Icon(Icons.Filled.BookmarkBorder, "Simpan menu") }
-        })
+        ScreenHeader("Detail menu", onBack = onBack)
 
         Box(Modifier.fillMaxWidth().height(200.dp)) {
             MenuPhoto(menu.fotoRes, Modifier.fillMaxSize(), shape = RoundedCornerShape(24.dp))

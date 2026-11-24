@@ -1,26 +1,26 @@
 package com.example.nutriplan.ui.beranda
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.example.nutriplan.R
 import com.example.nutriplan.ui.components.MenuPhoto
 import com.example.nutriplan.ui.components.NutriButton
 import com.example.nutriplan.ui.components.TextMuted
@@ -36,14 +36,12 @@ fun BerandaScreen(onMulai: () -> Unit, onMasuk: () -> Unit) {
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(40.dp).clip(CircleShape).background(GreenDark),
-                contentAlignment = Alignment.Center
-            ) { Icon(Icons.Filled.Restaurant, null, tint = Color.White) }
-            Spacer(Modifier.width(10.dp))
-            Text("NutriPlan", style = MaterialTheme.typography.titleLarge, color = GreenDark)
-        }
+        Image(
+            painter = painterResource(R.drawable.logo_nutriplan),
+            contentDescription = "NutriPlan",
+            modifier = Modifier.fillMaxWidth().height(140.dp),
+            contentScale = ContentScale.Fit
+        )
 
         // Taruh gambar bernama beranda_hero di res/drawable agar foto tampil di sini.
         Box(Modifier.fillMaxWidth().height(260.dp)) {

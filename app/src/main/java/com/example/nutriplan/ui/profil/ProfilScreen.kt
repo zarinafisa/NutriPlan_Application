@@ -3,12 +3,10 @@ package com.example.nutriplan.ui.profil
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.remember
-import androidx.core.content.ContextCompat
-import com.example.nutriplan.reminder.MealReminder
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,35 +17,46 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import coil.compose.AsyncImage
 import com.example.nutriplan.data.Session
 import com.example.nutriplan.data.repository.AuthRepository
 import com.example.nutriplan.data.repository.ProfileRepository
 import com.example.nutriplan.domain.CalorieCalculator
+import com.example.nutriplan.domain.Validator
+import com.example.nutriplan.reminder.MealReminder
 import com.example.nutriplan.ui.common.nutriViewModel
 import com.example.nutriplan.ui.components.TextMuted
 import com.example.nutriplan.ui.theme.GreenDark
 import com.example.nutriplan.ui.theme.GreenLight
 import com.example.nutriplan.ui.theme.RedError
+import com.example.nutriplan.util.FotoProfil
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import java.io.File
 import java.time.LocalDate
 
 // ---------------- State & ViewModel ----------------
@@ -89,6 +98,13 @@ class ProfilViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ProfilUiState())
 
     fun logout() = auth.logout()
+
+    /** onHasil(null) = berhasil, selain itu berisi pesan galat. */
+    fun ubahSandi(lama: String, baru: String, onHasil: (String?) -> Unit) {
+        viewModelScope.launch {
+            onHasil(auth.ubahSandi(lama, baru).exceptionOrNull()?.message)
+        }
+    }
 }
 
 // ---------------- Screen (stateful) ----------------
@@ -96,11 +112,24 @@ class ProfilViewModel(
 @Composable
 fun ProfilScreen(onEdit: () -> Unit, onLogout: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val vm = nutriViewModel(key = "profil-${Session.userId}") { c ->
         ProfilViewModel(c.profileRepository, c.authRepository, Session.userId)
     }
     val state by vm.ui.collectAsStateWithLifecycle()
     var pengingat by remember { mutableStateOf(MealReminder.isEnabled(context)) }
+    var dialog by remember { mutableStateOf<String?>(null) }
+    var foto by remember { mutableStateOf(FotoProfil.ambil(context, Session.userId)) }
+
+    val pilihFoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val hasil = FotoProfil.simpan(context, Session.userId, uri)
+                if (hasil != null) foto = hasil
+                else Toast.makeText(context, "Foto gagal disimpan.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val aktifkan = {
         MealReminder.enable(context)
@@ -117,7 +146,15 @@ fun ProfilScreen(onEdit: () -> Unit, onLogout: () -> Unit) {
 
     ProfilContent(
         state = state,
+        foto = foto,
         pengingat = pengingat,
+        onGantiFoto = {
+            pilihFoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        },
+        onHapusFoto = {
+            FotoProfil.hapus(context, Session.userId)
+            foto = null
+        },
         onPengingat = { nyala ->
             if (!nyala) {
                 MealReminder.disable(context)
@@ -132,12 +169,36 @@ fun ProfilScreen(onEdit: () -> Unit, onLogout: () -> Unit) {
             }
         },
         onEdit = onEdit,
-        onSegera = { Toast.makeText(context, "$it: segera hadir.", Toast.LENGTH_SHORT).show() },
+        onUbahSandi = { dialog = "sandi" },
+        onBantuan = { dialog = "bantuan" },
+        onPrivasi = { dialog = "privasi" },
         onLogout = {
             vm.logout()
             onLogout()
         }
     )
+
+    when (dialog) {
+        "sandi" -> UbahSandiDialog(
+            onTutup = { dialog = null },
+            onSimpan = { lama, baru, hasil -> vm.ubahSandi(lama, baru, hasil) }
+        )
+        "bantuan" -> InfoDialog(
+            judul = "Bantuan & dukungan",
+            isi = "1. Atur preferensimu di tab Preferensi, lalu simpan untuk membuat rencana makan.\n" +
+                    "2. Lihat jadwal di tab Rencana. Tekan \"Sudah makan\" setiap selesai makan.\n" +
+                    "3. Pantau kalori dan anggaran harianmu di Dasbor.\n\n" +
+                    "Ada kendala? Hubungi tim pengembang NutriPlan (Kelompok 8).",
+            onTutup = { dialog = null }
+        )
+        "privasi" -> InfoDialog(
+            judul = "Kebijakan privasi",
+            isi = "Data profil, preferensi, dan rencana makanmu disimpan di perangkat ini saja. " +
+                    "Kata sandi disimpan dalam bentuk hash, bukan teks asli. " +
+                    "Internet hanya dipakai untuk menampilkan inspirasi resep dari TheMealDB.",
+            onTutup = { dialog = null }
+        )
+    }
 }
 
 // ---------------- Content (stateless) ----------------
@@ -145,10 +206,15 @@ fun ProfilScreen(onEdit: () -> Unit, onLogout: () -> Unit) {
 @Composable
 fun ProfilContent(
     state: ProfilUiState,
+    foto: File?,
     pengingat: Boolean,
+    onGantiFoto: () -> Unit,
+    onHapusFoto: () -> Unit,
     onPengingat: (Boolean) -> Unit,
     onEdit: () -> Unit,
-    onSegera: (String) -> Unit,
+    onUbahSandi: () -> Unit,
+    onBantuan: () -> Unit,
+    onPrivasi: () -> Unit,
     onLogout: () -> Unit
 ) {
     if (state.loading) {
@@ -165,17 +231,53 @@ fun ProfilContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
-            Modifier.size(80.dp).clip(CircleShape).background(GreenLight),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(state.inisial, style = MaterialTheme.typography.headlineMedium, color = GreenDark)
+        Box(Modifier.size(96.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .size(88.dp)
+                    .clip(CircleShape)
+                    .background(GreenLight)
+                    .clickable(onClick = onGantiFoto),
+                contentAlignment = Alignment.Center
+            ) {
+                if (foto != null) {
+                    AsyncImage(
+                        model = foto,
+                        contentDescription = "Foto profil",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(state.inisial, style = MaterialTheme.typography.headlineMedium, color = GreenDark)
+                }
+            }
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(GreenDark)
+                    .clickable(onClick = onGantiFoto),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.PhotoCamera, contentDescription = "Ganti foto profil",
+                    tint = Color.White, modifier = Modifier.size(16.dp)
+                )
+            }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(state.nama, style = MaterialTheme.typography.titleLarge)
             Text(state.email, color = TextMuted)
-            TextButton(onClick = onEdit) {
-                Text("Edit profil", color = GreenDark, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onEdit) {
+                    Text("Edit profil", color = GreenDark, fontWeight = FontWeight.SemiBold)
+                }
+                if (foto != null) {
+                    TextButton(onClick = onHapusFoto) {
+                        Text("Hapus foto", color = RedError, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
         }
 
@@ -203,7 +305,7 @@ fun ProfilContent(
             Column {
                 BarisMenu("Data pribadi", onEdit)
                 HorizontalDivider(color = Color(0xFFEFEFEF))
-                BarisMenu("Ubah kata sandi") { onSegera("Ubah kata sandi") }
+                BarisMenu("Ubah kata sandi", onUbahSandi)
                 HorizontalDivider(color = Color(0xFFEFEFEF))
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -216,9 +318,9 @@ fun ProfilContent(
                     )
                 }
                 HorizontalDivider(color = Color(0xFFEFEFEF))
-                BarisMenu("Bantuan & dukungan") { onSegera("Bantuan & dukungan") }
+                BarisMenu("Bantuan & dukungan", onBantuan)
                 HorizontalDivider(color = Color(0xFFEFEFEF))
-                BarisMenu("Kebijakan privasi") { onSegera("Kebijakan privasi") }
+                BarisMenu("Kebijakan privasi", onPrivasi)
             }
         }
 
@@ -251,4 +353,70 @@ private fun BarisMenu(judul: String, onClick: () -> Unit) {
         Text(judul, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = TextMuted)
     }
+}
+
+// ---------------- Dialog ----------------
+
+@Composable
+private fun UbahSandiDialog(
+    onTutup: () -> Unit,
+    onSimpan: (String, String, (String?) -> Unit) -> Unit
+) {
+    val context = LocalContext.current
+    var lama by remember { mutableStateOf("") }
+    var baru by remember { mutableStateOf("") }
+    var ulang by remember { mutableStateOf("") }
+    var galat by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onTutup,
+        title = { Text("Ubah kata sandi") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = lama, onValueChange = { lama = it },
+                    label = { Text("Kata sandi lama") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                OutlinedTextField(
+                    value = baru, onValueChange = { baru = it },
+                    label = { Text("Kata sandi baru") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                OutlinedTextField(
+                    value = ulang, onValueChange = { ulang = it },
+                    label = { Text("Ulangi kata sandi baru") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                galat?.let { Text(it, color = RedError, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val pesan = Validator.sandi(baru) ?: Validator.konfirmasi(baru, ulang)
+                galat = pesan
+                if (pesan == null) {
+                    onSimpan(lama, baru) { hasil ->
+                        if (hasil == null) {
+                            Toast.makeText(context, "Kata sandi diubah.", Toast.LENGTH_SHORT).show()
+                            onTutup()
+                        } else {
+                            galat = hasil
+                        }
+                    }
+                }
+            }) { Text("Simpan", color = GreenDark) }
+        },
+        dismissButton = { TextButton(onClick = onTutup) { Text("Batal") } }
+    )
+}
+
+@Composable
+private fun InfoDialog(judul: String, isi: String, onTutup: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onTutup,
+        title = { Text(judul) },
+        text = { Text(isi) },
+        confirmButton = { TextButton(onClick = onTutup) { Text("Tutup", color = GreenDark) } }
+    )
 }

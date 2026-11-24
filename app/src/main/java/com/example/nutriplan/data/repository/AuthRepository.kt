@@ -38,4 +38,14 @@ class AuthRepository(
 
     suspend fun currentUser(): UserEntity? =
         Session.userId.takeIf { it != 0L }?.let { userDao.findById(it) }
+
+    suspend fun ubahSandi(lama: String, baru: String): Result<Unit> {
+        val user = currentUser()
+            ?: return Result.failure(IllegalStateException("Sesi berakhir. Silakan masuk lagi."))
+        val cocok = withContext(Dispatchers.Default) { PasswordHasher.verify(lama, user.passwordHash) }
+        if (!cocok) return Result.failure(IllegalStateException("Kata sandi lama salah."))
+        val hashBaru = withContext(Dispatchers.Default) { PasswordHasher.hash(baru) }
+        userDao.update(user.copy(passwordHash = hashBaru))
+        return Result.success(Unit)
+    }
 }

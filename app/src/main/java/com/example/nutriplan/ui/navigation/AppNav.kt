@@ -77,8 +77,7 @@ object Routes {
 
     fun rencanaLama(planId: Long) = "rencana_lama/$planId"
     fun detail(itemId: Long) = "detail/$itemId"
-    fun tambah(hari: Int, waktu: WaktuMakan) = "tambah/$hari/${waktu.name}"
-    fun ganti(itemId: Long) = "ganti/$itemId"
+    fun tambah(hari: Int, waktu: WaktuMakan, ganti: Boolean = false) = "tambah/$hari/${waktu.name}?ganti=$ganti"    fun ganti(itemId: Long) = "ganti/$itemId"
     fun filter(itemId: Long) = "filter/$itemId"
     fun konfirmasi(itemId: Long) = "konfirmasi/$itemId"
 }
@@ -212,7 +211,8 @@ fun AppNav() {
                 DasborScreen(
                     onLihatRencana = { goTab(Routes.RENCANA) },
                     onDetail = { nav.navigate(Routes.detail(it)) },
-                    onSusunRencana = { goTab(Routes.PREFERENSI) }
+                    onSusunRencana = { goTab(Routes.PREFERENSI) },
+                    onLonceng = { goTab(Routes.PROFIL) }
                 )
             }
             composable(Routes.PREFERENSI) {
@@ -223,7 +223,7 @@ fun AppNav() {
                     onBack = { nav.popBackStack() },
                     onDetail = { nav.navigate(Routes.detail(it)) },
                     onTambah = { hari, waktu -> nav.navigate(Routes.tambah(hari, waktu)) },
-                    onGanti = { nav.navigate(Routes.ganti(it)) },
+                    onGanti = { hari, waktu -> nav.navigate(Routes.tambah(hari, waktu, ganti = true)) },
                     onBuatRencana = { goTab(Routes.PREFERENSI) }
                 )
             }
@@ -244,7 +244,7 @@ fun AppNav() {
                     onBack = { nav.popBackStack() },
                     onDetail = { nav.navigate(Routes.detail(it)) },
                     onTambah = { _, _ -> },
-                    onGanti = { },
+                    onGanti = { _, _ -> },
                     onBuatRencana = { goTab(Routes.PREFERENSI) },
                     onGunakanLagiSelesai = { goTab(Routes.RENCANA) }
                 )
@@ -270,7 +270,8 @@ fun AppNav() {
                 Routes.TAMBAH,
                 arguments = listOf(
                     navArgument("hari") { type = NavType.IntType },
-                    navArgument("waktu") { type = NavType.StringType }
+                    navArgument("waktu") { type = NavType.StringType },
+                    navArgument("ganti") { type = NavType.BoolType; defaultValue = false }
                 )
             ) { entry ->
                 val waktu = runCatching {
@@ -279,50 +280,9 @@ fun AppNav() {
                 TambahMakananScreen(
                     hari = entry.arguments?.getInt("hari") ?: 1,
                     waktuAwal = waktu,
+                    ganti = entry.arguments?.getBoolean("ganti") ?: false,
                     onBack = { nav.popBackStack() }
                 )
-            }
-
-            // Tiga layar penukaran berbagi satu ViewModel lewat graph ini.
-            navigation(route = Routes.SWAP_GRAPH, startDestination = Routes.GANTI) {
-                composable(
-                    Routes.GANTI,
-                    arguments = listOf(navArgument("itemId") { type = NavType.LongType })
-                ) { entry ->
-                    val owner = remember(entry) { nav.getBackStackEntry(Routes.SWAP_GRAPH) }
-                    val itemId = entry.arguments?.getLong("itemId") ?: 0L
-                    GantiMenuScreen(
-                        itemId = itemId,
-                        owner = owner,
-                        onBack = { nav.popBackStack() },
-                        onFilter = { nav.navigate(Routes.filter(itemId)) },
-                        onLanjut = { nav.navigate(Routes.konfirmasi(itemId)) }
-                    )
-                }
-                composable(
-                    Routes.FILTER,
-                    arguments = listOf(navArgument("itemId") { type = NavType.LongType })
-                ) { entry ->
-                    val owner = remember(entry) { nav.getBackStackEntry(Routes.SWAP_GRAPH) }
-                    FilterMenuScreen(
-                        itemId = entry.arguments?.getLong("itemId") ?: 0L,
-                        owner = owner,
-                        onBack = { nav.popBackStack() }
-                    )
-                }
-                composable(
-                    Routes.KONFIRMASI,
-                    arguments = listOf(navArgument("itemId") { type = NavType.LongType })
-                ) { entry ->
-                    val owner = remember(entry) { nav.getBackStackEntry(Routes.SWAP_GRAPH) }
-                    KonfirmasiMenuScreen(
-                        itemId = entry.arguments?.getLong("itemId") ?: 0L,
-                        owner = owner,
-                        onBack = { nav.popBackStack() },
-                        onBatal = { nav.popBackStack(Routes.SWAP_GRAPH, inclusive = true) },
-                        onSelesai = { nav.popBackStack(Routes.SWAP_GRAPH, inclusive = true) }
-                    )
-                }
             }
         }
     }

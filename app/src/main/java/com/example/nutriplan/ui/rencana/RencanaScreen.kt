@@ -1,6 +1,8 @@
 package com.example.nutriplan.ui.rencana
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -114,6 +116,11 @@ class MealPlanViewModel(
 
     fun pilihHari(h: Int) { hariDipilih.value = h }
 
+    /** Tandai / batalkan "sudah makan" langsung dari kartu jadwal. */
+    fun tandaiDimakan(itemId: Long, dimakan: Boolean) {
+        viewModelScope.launch { planRepo.markEaten(itemId, dimakan) }
+    }
+
     /** Salin rencana lama menjadi rencana aktif baru. */
     fun gunakanLagi(onSelesai: (Boolean) -> Unit) {
         val id = planId ?: return
@@ -179,7 +186,7 @@ fun RencanaScreen(
     onBack: () -> Unit,
     onDetail: (Long) -> Unit,
     onTambah: (Int, WaktuMakan) -> Unit,
-    onGanti: (Long) -> Unit,
+    onGanti: (Int, WaktuMakan) -> Unit,
     onBuatRencana: () -> Unit,
     onGunakanLagiSelesai: () -> Unit = {}
 ) {
@@ -199,6 +206,7 @@ fun RencanaScreen(
         onTambah = onTambah,
         onGanti = onGanti,
         onBuatRencana = onBuatRencana,
+        onTandai = vm::tandaiDimakan,
         onGunakanLagi = {
             vm.gunakanLagi { ok ->
                 if (ok) {
@@ -221,7 +229,8 @@ fun RencanaContent(
     onPilihHari: (Int) -> Unit,
     onDetail: (Long) -> Unit,
     onTambah: (Int, WaktuMakan) -> Unit,
-    onGanti: (Long) -> Unit,
+    onGanti: (Int, WaktuMakan) -> Unit,
+    onTandai: (Long, Boolean) -> Unit,
     onBuatRencana: () -> Unit,
     onGunakanLagi: () -> Unit
 ) {
@@ -290,8 +299,9 @@ fun RencanaContent(
                 slot = slot,
                 bacaSaja = state.bacaSaja,
                 onTambah = { onTambah(state.hari, slot.waktu) },
+                onGanti = { onGanti(state.hari, slot.waktu) },
                 onDetail = onDetail,
-                onGanti = onGanti
+                onTandai = onTandai
             )
         }
 
@@ -408,8 +418,9 @@ private fun SlotCard(
     slot: SlotUi,
     bacaSaja: Boolean,
     onTambah: () -> Unit,
+    onGanti: () -> Unit,
     onDetail: (Long) -> Unit,
-    onGanti: (Long) -> Unit
+    onTandai: (Long, Boolean) -> Unit
 ) {
     val item = slot.item
     val menu = slot.menu
@@ -424,9 +435,14 @@ private fun SlotCard(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
-                if (!bacaSaja) {
-                    TextButton(onClick = onTambah) {
-                        Text("+ Tambah Makanan", color = GreenDark, fontWeight = FontWeight.SemiBold)
+                if (item != null && menu != null) {
+                    if (!bacaSaja) {
+                        TombolSudahMakan(
+                            sudah = item.sudahDimakan,
+                            onClick = { onTandai(item.id, !item.sudahDimakan) }
+                        )
+                    } else if (item.sudahDimakan) {
+                        Text("✓ Sudah dimakan", color = GreenDark, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -445,7 +461,7 @@ private fun SlotCard(
                                 Text("Detail →", color = GreenDark, fontWeight = FontWeight.SemiBold)
                             }
                             if (!bacaSaja) {
-                                TextButton(onClick = { onGanti(item.id) }, contentPadding = PaddingValues(end = 12.dp)) {
+                                TextButton(onClick = onGanti, contentPadding = PaddingValues(end = 12.dp)) {
                                     Text("Ganti Menu →", color = GreenDark, fontWeight = FontWeight.SemiBold)
                                 }
                             }
@@ -467,6 +483,35 @@ private fun SlotCard(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TombolSudahMakan(sudah: Boolean, onClick: () -> Unit) {
+    val padding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
+    if (sudah) {
+        OutlinedButton(
+            onClick = onClick,
+            shape = RoundedCornerShape(50),
+            border = BorderStroke(1.dp, GreenDark),
+            contentPadding = padding,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = GreenDark)
+        ) {
+            Icon(Icons.Filled.Check, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Sudah dimakan", fontWeight = FontWeight.SemiBold)
+        }
+    } else {
+        Button(
+            onClick = onClick,
+            shape = RoundedCornerShape(50),
+            contentPadding = padding,
+            colors = ButtonDefaults.buttonColors(containerColor = GreenDark, contentColor = Color.White)
+        ) {
+            Icon(Icons.Filled.Check, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Sudah makan", fontWeight = FontWeight.SemiBold)
         }
     }
 }
